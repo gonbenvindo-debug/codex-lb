@@ -645,3 +645,21 @@ async def test_dashboard_overview_summary_uses_exact_timeframe_even_when_trends_
     assert payload["summary"]["metrics"]["errorCount"] == 1
     assert payload["summary"]["metrics"]["topError"] == "rate_limit_exceeded"
     assert all(point["v"] == 0 for point in payload["trends"]["requests"])
+
+
+@pytest.mark.asyncio
+async def test_dashboard_overview_supports_conditional_get(async_client, monkeypatch: pytest.MonkeyPatch):
+    fixed_now = datetime(2026, 4, 3, 10, 37, 0)
+    monkeypatch.setattr("app.modules.dashboard.service.utcnow", lambda: fixed_now)
+
+    first = await async_client.get("/api/dashboard/overview")
+    assert first.status_code == 200
+    assert first.headers["cache-control"] == "private, max-age=0, must-revalidate"
+    etag = first.headers.get("etag")
+    assert etag
+
+    second = await async_client.get("/api/dashboard/overview", headers={"If-None-Match": etag})
+    assert second.status_code == 304
+    assert second.headers["cache-control"] == "private, max-age=0, must-revalidate"
+    assert second.headers.get("etag") == etag
+    assert second.content == b""

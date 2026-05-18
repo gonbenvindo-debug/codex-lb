@@ -96,3 +96,34 @@ async def test_request_logs_api_returns_recent(async_client, db_setup):
     assert older["tokens"] == 300
     assert older["cachedInputTokens"] is None
     assert older["transport"] == "http"
+
+
+@pytest.mark.asyncio
+async def test_request_logs_api_supports_conditional_get(async_client, db_setup):
+    async with SessionLocal() as session:
+        accounts_repo = AccountsRepository(session)
+        logs_repo = RequestLogsRepository(session)
+        await accounts_repo.upsert(_make_account("acc_logs_etag", "logs-etag@example.com"))
+        await logs_repo.add_log(
+            account_id="acc_logs_etag",
+            request_id="req_logs_etag_1",
+            model="gpt-5.1",
+            input_tokens=5,
+            output_tokens=10,
+            latency_ms=100,
+            status="success",
+            error_code=None,
+            requested_at=utcnow(),
+        )
+
+    first = await async_client.get("/api/request-logs?limit=10")
+    assert first.status_code == 200
+    assert first.headers["cache-control"] == "private, max-age=0, must-revalidate"
+    etag = first.headers.get("etag")
+    assert etag
+
+    second = await async_client.get("/api/request-logs?limit=10", headers={"If-None-Match": etag})
+    assert second.status_code == 304
+    assert second.headers["cache-control"] == "private, max-age=0, must-revalidate"
+    assert second.headers.get("etag") == etag
+    assert second.content == b""

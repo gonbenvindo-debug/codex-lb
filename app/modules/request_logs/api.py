@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import Response
 
 from app.core.auth.dependencies import set_dashboard_error_format, validate_dashboard_session
+from app.core.utils.http_cache import conditional_json_response
 from app.dependencies import RequestLogsContext, get_request_logs_context
 from app.modules.request_logs.schemas import (
     RequestLogApiKeyOption,
@@ -39,6 +41,7 @@ def _parse_model_option(value: str) -> ServiceRequestLogModelOption | None:
 
 @router.get("", response_model=RequestLogsResponse)
 async def list_request_logs(
+    request: Request,
     limit: int = Query(50, ge=1, le=1000),
     offset: int = Query(0, ge=0),
     search: str | None = Query(default=None),
@@ -51,7 +54,7 @@ async def list_request_logs(
     since: datetime | None = Query(default=None),
     until: datetime | None = Query(default=None),
     context: RequestLogsContext = Depends(get_request_logs_context),
-) -> RequestLogsResponse:
+) -> Response:
     parsed_options: list[ServiceRequestLogModelOption] | None = None
     if model_option:
         parsed = [_parse_model_option(value) for value in model_option]
@@ -69,15 +72,17 @@ async def list_request_logs(
         reasoning_efforts=reasoning_effort,
         status=status,
     )
-    return RequestLogsResponse(
+    payload = RequestLogsResponse(
         requests=page.requests,
         total=page.total,
         has_more=page.has_more,
     )
+    return conditional_json_response(request, payload)
 
 
 @router.get("/options", response_model=RequestLogFilterOptionsResponse)
 async def list_request_log_filter_options(
+    request: Request,
     status: list[str] | None = Query(default=None),
     account_id: list[str] | None = Query(default=None, alias="accountId"),
     api_key_id: list[str] | None = Query(default=None, alias="apiKeyId"),
@@ -87,7 +92,7 @@ async def list_request_log_filter_options(
     since: datetime | None = Query(default=None),
     until: datetime | None = Query(default=None),
     context: RequestLogsContext = Depends(get_request_logs_context),
-) -> RequestLogFilterOptionsResponse:
+) -> Response:
     _ = status  # Keep input backward compatible but do not self-filter status facet.
     parsed_options: list[ServiceRequestLogModelOption] | None = None
     if model_option:
@@ -102,7 +107,7 @@ async def list_request_log_filter_options(
         models=model,
         reasoning_efforts=reasoning_effort,
     )
-    return RequestLogFilterOptionsResponse(
+    payload = RequestLogFilterOptionsResponse(
         account_ids=options.account_ids,
         model_options=[
             RequestLogModelOption(model=option.model, reasoning_effort=option.reasoning_effort)
@@ -114,3 +119,4 @@ async def list_request_log_filter_options(
         ],
         statuses=options.statuses,
     )
+    return conditional_json_response(request, payload)
