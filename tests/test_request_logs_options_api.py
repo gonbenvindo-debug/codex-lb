@@ -277,3 +277,35 @@ async def test_request_logs_options_return_api_keys_and_ignore_api_key_self_filt
         {"id": "key_opt_a", "name": "Alpha Key", "keyPrefix": "sk-alpha"},
         {"id": "key_opt_b", "name": "Beta Key", "keyPrefix": "sk-beta"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_request_logs_options_supports_conditional_get(async_client, db_setup):
+    now = utcnow()
+    async with SessionLocal() as session:
+        accounts_repo = AccountsRepository(session)
+        logs_repo = RequestLogsRepository(session)
+        await accounts_repo.upsert(_make_account("acc_opt_etag", "opt-etag@example.com"))
+        await logs_repo.add_log(
+            account_id="acc_opt_etag",
+            request_id="req_opt_etag_1",
+            model="gpt-5.1",
+            input_tokens=10,
+            output_tokens=10,
+            latency_ms=100,
+            status="success",
+            error_code=None,
+            requested_at=now,
+        )
+
+    first = await async_client.get("/api/request-logs/options")
+    assert first.status_code == 200
+    assert first.headers["cache-control"] == "private, max-age=0, must-revalidate"
+    etag = first.headers.get("etag")
+    assert etag
+
+    second = await async_client.get("/api/request-logs/options", headers={"If-None-Match": etag})
+    assert second.status_code == 304
+    assert second.headers["cache-control"] == "private, max-age=0, must-revalidate"
+    assert second.headers.get("etag") == etag
+    assert second.content == b""
