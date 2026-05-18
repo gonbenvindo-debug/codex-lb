@@ -2582,6 +2582,7 @@ async def _normalize_public_responses_stream(
             relies on the upstream's native event shape.
     """
     terminal_seen = False
+    done_seen = False
     contract_violation_kind: str | None = None
     seen_text_delta_keys: set[tuple[str | None, int | None]] = set()
     # Collect output items from streamed ``response.output_item.added`` /
@@ -2605,6 +2606,7 @@ async def _normalize_public_responses_stream(
     created_emitted = False
     async for event_block in stream:
         if event_block.strip() == "data: [DONE]":
+            done_seen = True
             if terminal_seen:
                 yield event_block
             continue
@@ -2676,6 +2678,8 @@ async def _normalize_public_responses_stream(
             terminal_seen = True
         yield format_sse_event(normalized_payload)
     if terminal_seen:
+        if not done_seen and not enforce_openai_sdk_contract:
+            yield "data: [DONE]\n\n"
         return
     error_kind = contract_violation_kind or "upstream_stream_truncated"
     yield format_sse_event(
