@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from cryptography.fernet import Fernet
 
 from app.core.auth.dashboard_mode import DashboardAuthMode, normalize_dashboard_auth_proxy_header
 
@@ -25,7 +26,13 @@ def _in_container() -> bool:
     return Path("/.dockerenv").exists() or Path("/run/.containerenv").exists()
 
 
+def _in_vercel() -> bool:
+    return os.getenv("VERCEL") is not None
+
+
 def _default_home_dir() -> Path:
+    if _in_vercel():
+        return Path("/tmp/codex-lb")
     if _in_container():
         return DOCKER_DATA_DIR
     return Path.home() / ".codex-lb"
@@ -43,12 +50,28 @@ def _default_http_bridge_instance_id() -> str:
 
 
 def _default_serverless_mode() -> bool:
-    return os.getenv("VERCEL") is not None
+    return _in_vercel()
 
 
 DEFAULT_HOME_DIR = _default_home_dir()
-DEFAULT_DB_PATH = DEFAULT_HOME_DIR / "store.db"
-DEFAULT_ENCRYPTION_KEY_FILE = DEFAULT_HOME_DIR / "encryption.key"
+
+
+def _default_db_path() -> Path:
+    return _default_home_dir() / "store.db"
+
+
+def _default_database_url() -> str:
+    return f"sqlite+aiosqlite:///{_default_db_path()}"
+
+
+def _default_encryption_key_file() -> Path:
+    return _default_home_dir() / "encryption.key"
+
+
+def _default_conversation_archive_dir() -> Path:
+    return _default_home_dir() / "conversation-archive"
+
+
 type StringListInput = str | list[str] | None
 type OptionalStringInput = str | None
 type ModelContextWindowOverridesInput = str | dict[str, int] | None
@@ -121,7 +144,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    database_url: str = f"sqlite+aiosqlite:///{DEFAULT_DB_PATH}"
+    database_url: str = Field(default_factory=_default_database_url)
     database_pool_size: int = Field(default=15, gt=0)
     database_max_overflow: int = Field(default=10, ge=0)
     database_background_pool_size: int | None = Field(default=None, gt=0)
@@ -179,7 +202,8 @@ class Settings(BaseSettings):
     http_responses_session_bridge_advertise_base_url: str | None = None
     sticky_session_cleanup_enabled: bool = True
     sticky_session_cleanup_interval_seconds: int = Field(default=300, gt=0)
-    encryption_key_file: Path = DEFAULT_ENCRYPTION_KEY_FILE
+    encryption_key: str | None = None
+    encryption_key_file: Path = Field(default_factory=_default_encryption_key_file)
     database_migrations_fail_fast: bool = True
     log_proxy_request_shape: bool = False
     log_proxy_request_shape_raw_cache_key: bool = False
@@ -188,7 +212,7 @@ class Settings(BaseSettings):
     log_upstream_request_summary: bool = False
     log_upstream_request_payload: bool = False
     conversation_archive_enabled: bool = False
-    conversation_archive_dir: Path = DEFAULT_HOME_DIR / "conversation-archive"
+    conversation_archive_dir: Path = Field(default_factory=_default_conversation_archive_dir)
     max_decompressed_body_bytes: int = Field(default=32 * 1024 * 1024, gt=0)
     image_inline_fetch_enabled: bool = True
     image_inline_allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
@@ -295,6 +319,24 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return Path(value).expanduser()
         raise TypeError("encryption_key_file must be a path")
+
+    @field_validator("encryption_key", mode="before")
+    @classmethod
+    def _normalize_encryption_key(cls, value: object) -> str | None:
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError("encryption_key must be a string")
+        normalized = value.strip()
+        return normalized or None
+
+    @field_validator("encryption_key")
+    @classmethod
+    def _validate_encryption_key(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        Fernet(value.encode("ascii"))
+        return value
 
     @field_validator("image_inline_allowed_hosts", mode="before")
     @classmethod
