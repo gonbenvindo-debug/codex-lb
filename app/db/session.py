@@ -28,6 +28,22 @@ _SQLITE_BUSY_TIMEOUT_MS = 5_000
 _SQLITE_BUSY_TIMEOUT_SECONDS = _SQLITE_BUSY_TIMEOUT_MS / 1000
 
 
+def _normalize_async_database_url(url: str) -> str:
+    """Return a database URL suitable for SQLAlchemy's async engine.
+
+    Some hosting providers expose PostgreSQL URLs as ``postgres://`` or
+    ``postgresql://``. Passing those directly to ``create_async_engine`` makes
+    SQLAlchemy load a synchronous driver such as psycopg2. Normalize them to the
+    asyncpg dialect used by this app while leaving already explicit dialects
+    unchanged.
+    """
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    return url
+
+
 def _is_sqlite_url(url: str) -> bool:
     return url.startswith("sqlite+aiosqlite:///") or url.startswith("sqlite:///")
 
@@ -90,17 +106,19 @@ def _configure_sqlite_engine(engine: Engine, *, enable_wal: bool) -> None:
             cursor.close()
 
 
-if _is_sqlite_url(_settings.database_url):
-    is_sqlite_memory = _is_sqlite_memory_url(_settings.database_url)
+_database_url = _normalize_async_database_url(_settings.database_url)
+
+if _is_sqlite_url(_database_url):
+    is_sqlite_memory = _is_sqlite_memory_url(_database_url)
     if is_sqlite_memory:
         engine = create_async_engine(
-            _settings.database_url,
+            _database_url,
             echo=False,
             connect_args={"timeout": _SQLITE_BUSY_TIMEOUT_SECONDS},
         )
     else:
         engine = create_async_engine(
-            _settings.database_url,
+            _database_url,
             echo=False,
             pool_size=_settings.database_pool_size,
             max_overflow=_settings.database_max_overflow,
@@ -110,9 +128,9 @@ if _is_sqlite_url(_settings.database_url):
     _configure_sqlite_engine(engine.sync_engine, enable_wal=not is_sqlite_memory)
 else:
     engine = create_async_engine(
-        _settings.database_url,
+        _database_url,
         echo=False,
-        **_postgres_async_engine_kwargs(_settings.database_url, background=False),
+        **_postgres_async_engine_kwargs(_database_url, background=False),
     )
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -198,7 +216,7 @@ def init_background_db(url: str | None = None) -> None:
         url: Database URL. If None, uses settings.database_url.
     """
     global _background_engine, _background_session_factory
-    db_url = url or _settings.database_url
+    db_url = _normalize_async_database_url(url or _settings.database_url)
 
     if _is_sqlite_url(db_url):
         is_sqlite_memory = _is_sqlite_memory_url(db_url)
@@ -261,8 +279,8 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 
 
 async def init_db() -> None:
-    _ensure_sqlite_dir(_settings.database_url)
-    sqlite_path = sqlite_db_path_from_url(_settings.database_url)
+    _ensure_sqlite_dir(_database_url)
+    sqlite_path = sqlite_db_path_from_url(_database_url)
     if sqlite_path is not None:
         check_mode = _startup_sqlite_check_mode(_settings.database_sqlite_startup_check_mode)
         if check_mode is not None:
@@ -304,7 +322,7 @@ async def init_db() -> None:
 
     if not _settings.database_migrate_on_startup:
         migration_state = await to_thread.run_sync(
-            lambda: inspect_migration_state(_settings.database_url),
+            lambda: inspect_migration_state(_database_url),
         )
         if migration_state.needs_upgrade:
             current_revision = migration_state.current_revision or "none"
@@ -321,7 +339,7 @@ async def init_db() -> None:
 
     if sqlite_path is not None and _settings.database_sqlite_pre_migrate_backup_enabled and sqlite_path.exists():
         migration_state = await to_thread.run_sync(
-            lambda: inspect_migration_state(_settings.database_url),
+            lambda: inspect_migration_state(_database_url),
         )
         if migration_state.needs_upgrade:
             try:
@@ -345,7 +363,7 @@ async def init_db() -> None:
             )
 
     try:
-        result = await run_startup_migrations(_settings.database_url)
+        result = await run_startup_migrations(_database_url)
         if result.bootstrap.stamped_revision is not None:
             logger.info(
                 "Bootstrapped legacy migrations stamped_revision=%s legacy_rows=%s",
@@ -354,7 +372,7 @@ async def init_db() -> None:
             )
         if result.current_revision is not None:
             logger.info("Database migration complete revision=%s", result.current_revision)
-        drift = await to_thread.run_sync(lambda: check_schema_drift(_settings.database_url))
+        drift = await to_thread.run_sync(lambda: check_schema_drift(_database_url))
         if drift:
             drift_details = "; ".join(drift)
             raise RuntimeError(f"Schema drift detected after startup migrations: {drift_details}")
