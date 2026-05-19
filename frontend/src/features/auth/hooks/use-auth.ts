@@ -19,6 +19,7 @@ type AuthState = {
   authMode: DashboardAuthMode;
   passwordManagementEnabled: boolean;
   passwordSessionActive: boolean;
+  sessionCheckFailed: boolean;
   loading: boolean;
   initialized: boolean;
   error: string | null;
@@ -40,6 +41,7 @@ function applySession(set: (next: Partial<AuthState>) => void, session: AuthSess
     authMode: session.authMode,
     passwordManagementEnabled: session.passwordManagementEnabled,
     passwordSessionActive: session.passwordSessionActive,
+    sessionCheckFailed: false,
     initialized: true,
     error: null,
   });
@@ -56,6 +58,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   authMode: "standard",
   passwordManagementEnabled: true,
   passwordSessionActive: false,
+  sessionCheckFailed: false,
   loading: false,
   initialized: false,
   error: null,
@@ -66,6 +69,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       return applySession(set, session);
     } catch (error) {
       set({
+        sessionCheckFailed: true,
         error: error instanceof Error ? error.message : "Failed to refresh session",
       });
       throw error;
@@ -80,6 +84,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       return applySession(set, session);
     } catch (error) {
       set({
+        sessionCheckFailed: false,
         error: error instanceof Error ? error.message : "Login failed",
       });
       throw error;
@@ -98,6 +103,7 @@ export const useAuthStore = create<AuthState>((set) => ({
         bootstrapTokenConfigured: false,
         authMode: "standard",
         passwordManagementEnabled: true,
+        sessionCheckFailed: false,
       });
       await useAuthStore.getState().refreshSession();
     } finally {
@@ -111,6 +117,7 @@ export const useAuthStore = create<AuthState>((set) => ({
       return applySession(set, session);
     } catch (error) {
       set({
+        sessionCheckFailed: false,
         error: error instanceof Error ? error.message : "TOTP verification failed",
       });
       throw error;
@@ -128,6 +135,7 @@ setUnauthorizedHandler(() => {
     ...state,
     authenticated: false,
     initialized: true,
+    sessionCheckFailed: false,
     error: null,
   }));
 });
