@@ -9,6 +9,10 @@ import { defineConfig } from "vitest/config";
 const proxyTarget = process.env.API_PROXY_TARGET || "http://localhost:2455";
 const packageJson = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version?: string };
 const appVersion = packageJson.version ?? "0.0.0";
+const frontendRoot = path.dirname(fileURLToPath(import.meta.url));
+const buildOutDir = process.env.CODEX_LB_FRONTEND_OUT_DIR
+  ? path.resolve(frontendRoot, process.env.CODEX_LB_FRONTEND_OUT_DIR)
+  : path.resolve(frontendRoot, "../app/static");
 const manualChunkPackages: Record<string, string[]> = {
   "vendor-react": ["react", "react-dom", "react-router-dom"],
   "vendor-query": ["@tanstack/react-query"],
@@ -37,7 +41,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      "@": path.resolve(path.dirname(fileURLToPath(import.meta.url)), "./src"),
+      "@": path.resolve(frontendRoot, "./src"),
     },
   },
   server: {
@@ -49,7 +53,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "../app/static",
+    outDir: buildOutDir,
     emptyOutDir: true,
     rollupOptions: {
       output: {

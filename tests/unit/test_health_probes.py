@@ -324,6 +324,7 @@ async def test_health_ready_fails_when_bridge_durable_schema_is_not_ready():
         patch("app.core.startup._bridge_registration_complete", True),
         patch("app.modules.health.api.get_settings") as mock_settings,
         patch("app.modules.health.api.get_session") as mock_get_session,
+        patch("app.modules.health.api._get_bridge_ring_info", new=AsyncMock(return_value=_bridge_ring_ok())),
     ):
         mock_settings.return_value.http_responses_session_bridge_enabled = True
         mock_session = AsyncMock()
@@ -425,3 +426,40 @@ async def test_internal_drain_status_rejects_non_loopback_clients():
         await internal_drain_status(cast(Any, request))
 
     assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_internal_usage_refresh_accepts_bearer_secret():
+    from app.modules.health.api import internal_usage_refresh
+
+    scheduler = SimpleNamespace(refresh_once=AsyncMock())
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="8.8.8.8"),
+        headers={"authorization": "Bearer test-secret"},
+    )
+
+    with (
+        patch("app.modules.health.api.get_settings", return_value=SimpleNamespace(internal_cron_secret="test-secret")),
+        patch("app.modules.health.api.build_usage_refresh_scheduler", return_value=scheduler),
+    ):
+        response = await internal_usage_refresh(cast(Any, request))
+
+    scheduler.refresh_once.assert_awaited_once()
+    assert response.status == "ok"
+    assert response.checks == {"usage_refresh": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_internal_usage_refresh_rejects_wrong_bearer_secret():
+    from app.modules.health.api import internal_usage_refresh
+
+    request = SimpleNamespace(
+        client=SimpleNamespace(host="8.8.8.8"),
+        headers={"authorization": "Bearer wrong-secret"},
+    )
+
+    with patch("app.modules.health.api.get_settings", return_value=SimpleNamespace(internal_cron_secret="test-secret")):
+        with pytest.raises(HTTPException) as exc_info:
+            await internal_usage_refresh(cast(Any, request))
+
+    assert exc_info.value.status_code == 401

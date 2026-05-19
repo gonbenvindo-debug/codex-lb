@@ -100,9 +100,9 @@ async def lifespan(app: FastAPI):
     shutdown_state = import_module("app.core.shutdown")
     metrics_server = None
     metrics_server_task: asyncio.Task[None] | None = None
-    ring_service = None
+    ring_service: RingMembershipService | None = None
     heartbeat_task: asyncio.Task[None] | None = None
-    instance_id = None
+    instance_id: str | None = None
 
     startup_module._startup_complete = False
     startup_module.reset_bridge_registration()
@@ -111,6 +111,7 @@ async def lifespan(app: FastAPI):
     await get_rate_limit_headers_cache().invalidate()
     reload_additional_quota_registry()
     settings = get_settings()
+    serverless_mode = settings.serverless_mode
     bridge_endpoint_base_url = settings.http_responses_session_bridge_advertise_base_url
     if settings.otel_enabled:
         from app.core.tracing.otel import init_tracing
@@ -129,43 +130,48 @@ async def lifespan(app: FastAPI):
     api_key_limit_reset_scheduler = build_api_key_limit_reset_scheduler()
     model_scheduler = build_model_refresh_scheduler()
     sticky_session_cleanup_scheduler = build_sticky_session_cleanup_scheduler()
-    await usage_scheduler.start()
-    await api_key_limit_reset_scheduler.start()
-    await model_scheduler.start()
-    await sticky_session_cleanup_scheduler.start()
-    if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
-        import uvicorn
+    cache_poller = None
 
-        scrape_registry = make_scrape_registry()
-        prometheus_module = import_module("prometheus_client")
-        make_asgi_app = getattr(prometheus_module, "make_asgi_app")
-        metrics_app = make_asgi_app(registry=scrape_registry)
-        config = uvicorn.Config(metrics_app, host="0.0.0.0", port=settings.metrics_port, log_level="warning")
-        metrics_server = uvicorn.Server(config)
+    if not serverless_mode:
+        await usage_scheduler.start()
+        await api_key_limit_reset_scheduler.start()
+        await model_scheduler.start()
+        await sticky_session_cleanup_scheduler.start()
+        if settings.metrics_enabled and PROMETHEUS_AVAILABLE:
+            import uvicorn
 
-        async def _serve_metrics(srv: _MetricsServer) -> None:
-            try:
-                await srv.serve()
-            except SystemExit as exc:
-                if _is_benign_metrics_bind_failure(exc):
-                    logger.info(
-                        "Metrics port %d unavailable (another worker likely serves metrics)",
-                        settings.metrics_port,
-                    )
-                else:
-                    raise
-            except OSError as exc:
-                if _is_benign_metrics_bind_failure(exc):
-                    logger.info(
-                        "Metrics port %d already bound (another worker serves metrics)",
-                        settings.metrics_port,
-                    )
-                else:
-                    raise
+            scrape_registry = make_scrape_registry()
+            prometheus_module = import_module("prometheus_client")
+            make_asgi_app = getattr(prometheus_module, "make_asgi_app")
+            metrics_app = make_asgi_app(registry=scrape_registry)
+            config = uvicorn.Config(metrics_app, host="0.0.0.0", port=settings.metrics_port, log_level="warning")
+            metrics_server = uvicorn.Server(config)
 
-        metrics_server_task = asyncio.create_task(_serve_metrics(metrics_server))
-    elif settings.metrics_enabled:
-        logger.warning("Metrics endpoint enabled but prometheus-client is not installed")
+            async def _serve_metrics(srv: _MetricsServer) -> None:
+                try:
+                    await srv.serve()
+                except SystemExit as exc:
+                    if _is_benign_metrics_bind_failure(exc):
+                        logger.info(
+                            "Metrics port %d unavailable (another worker likely serves metrics)",
+                            settings.metrics_port,
+                        )
+                    else:
+                        raise
+                except OSError as exc:
+                    if _is_benign_metrics_bind_failure(exc):
+                        logger.info(
+                            "Metrics port %d already bound (another worker serves metrics)",
+                            settings.metrics_port,
+                        )
+                    else:
+                        raise
+
+            metrics_server_task = asyncio.create_task(_serve_metrics(metrics_server))
+        elif settings.metrics_enabled:
+            logger.warning("Metrics endpoint enabled but prometheus-client is not installed")
+    else:
+        logger.info("Serverless mode enabled; skipping long-lived background services")
 
     async def _complete_bridge_registration(svc: RingMembershipService, iid: str) -> None:
         if bridge_endpoint_base_url is None:
@@ -214,27 +220,25 @@ async def lifespan(app: FastAPI):
             return
         await svc.register(iid, endpoint_base_url=bridge_endpoint_base_url)
 
-    from app.core.auth.api_key_cache import get_api_key_cache
-    from app.core.cache.invalidation import (
-        NAMESPACE_API_KEY,
-        NAMESPACE_FIREWALL,
-        CacheInvalidationPoller,
-        set_cache_invalidation_poller,
-    )
-    from app.core.middleware.firewall_cache import get_firewall_ip_cache
+    if not serverless_mode:
+        from app.core.auth.api_key_cache import get_api_key_cache
+        from app.core.cache.invalidation import (
+            NAMESPACE_API_KEY,
+            NAMESPACE_FIREWALL,
+            CacheInvalidationPoller,
+            set_cache_invalidation_poller,
+        )
+        from app.core.middleware.firewall_cache import get_firewall_ip_cache
 
-    cache_poller = CacheInvalidationPoller(SessionLocal)
-    cache_poller.on_invalidation(NAMESPACE_API_KEY, get_api_key_cache().clear)
-    cache_poller.on_invalidation(NAMESPACE_FIREWALL, get_firewall_ip_cache().invalidate_all)
-    set_cache_invalidation_poller(cache_poller)
-    await cache_poller.start()
+        cache_poller = CacheInvalidationPoller(SessionLocal)
+        cache_poller.on_invalidation(NAMESPACE_API_KEY, get_api_key_cache().clear)
+        cache_poller.on_invalidation(NAMESPACE_FIREWALL, get_firewall_ip_cache().invalidate_all)
+        set_cache_invalidation_poller(cache_poller)
+        await cache_poller.start()
 
-    ring_service: RingMembershipService | None = None
-    instance_id: str | None = None
-    heartbeat_task: asyncio.Task[None] | None = None
-    ring_service = RingMembershipService(SessionLocal)
-    instance_id = settings.http_responses_session_bridge_instance_id
-    heartbeat_task = asyncio.create_task(_register_and_heartbeat(ring_service, instance_id))
+        ring_service = RingMembershipService(SessionLocal)
+        instance_id = settings.http_responses_session_bridge_instance_id
+        heartbeat_task = asyncio.create_task(_register_and_heartbeat(ring_service, instance_id))
     startup_module._startup_complete = True
 
     try:
@@ -286,7 +290,8 @@ async def lifespan(app: FastAPI):
         if metrics_server is not None:
             metrics_server.should_exit = True
 
-        await cache_poller.stop()
+        if cache_poller is not None:
+            await cache_poller.stop()
         await sticky_session_cleanup_scheduler.stop()
         await model_scheduler.stop()
         await api_key_limit_reset_scheduler.stop()
@@ -375,7 +380,7 @@ def create_app() -> FastAPI:
     index_html = static_dir / "index.html"
     static_root = static_dir.resolve()
     frontend_build_hint = "Frontend assets are missing. Run `cd frontend && bun run build`."
-    excluded_prefixes = ("api/", "v1/", "backend-api/", "health")
+    excluded_prefixes = ("api/", "v1/", "backend-api/", "health", "internal/")
 
     def _is_static_asset_path(path: str) -> bool:
         if path.startswith("assets/"):

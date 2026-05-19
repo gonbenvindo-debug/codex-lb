@@ -42,6 +42,10 @@ def _default_http_bridge_instance_id() -> str:
     return hostname or "codex-lb"
 
 
+def _default_serverless_mode() -> bool:
+    return os.getenv("VERCEL") is not None
+
+
 DEFAULT_HOME_DIR = _default_home_dir()
 DEFAULT_DB_PATH = DEFAULT_HOME_DIR / "store.db"
 DEFAULT_ENCRYPTION_KEY_FILE = DEFAULT_HOME_DIR / "encryption.key"
@@ -129,6 +133,7 @@ class Settings(BaseSettings):
     database_sqlite_pre_migrate_backup_max_files: int = Field(default=5, ge=1)
     database_sqlite_startup_check_mode: Literal["quick", "full", "off"] = "quick"
     database_alembic_auto_remap_enabled: bool = True
+    serverless_mode: bool = Field(default_factory=_default_serverless_mode)
     upstream_base_url: str = "https://chatgpt.com/backend-api"
     upstream_stream_transport: Literal["http", "websocket", "auto"] = "auto"
     upstream_connect_timeout_seconds: float = 8.0
@@ -270,6 +275,7 @@ class Settings(BaseSettings):
     # HTTP connector limits
     http_connector_limit: int = 100
     http_connector_limit_per_host: int = 50
+    internal_cron_secret: str | None = None
 
     @field_validator("database_url")
     @classmethod
@@ -419,6 +425,35 @@ class Settings(BaseSettings):
         if self.bulkhead_proxy_compact_limit is None:
             http_limit = self.bulkhead_proxy_http_limit
             self.bulkhead_proxy_compact_limit = 0 if http_limit <= 0 else min(http_limit, 16)
+        return self
+
+    @model_validator(mode="after")
+    def _apply_serverless_defaults(self) -> "Settings":
+        if not self.serverless_mode:
+            return self
+
+        self.database_pool_size = min(self.database_pool_size, 4)
+        self.database_max_overflow = min(self.database_max_overflow, 2)
+        if self.database_background_pool_size is None:
+            self.database_background_pool_size = 2
+        else:
+            self.database_background_pool_size = min(self.database_background_pool_size, 2)
+        if self.database_background_max_overflow is None:
+            self.database_background_max_overflow = 0
+        else:
+            self.database_background_max_overflow = min(self.database_background_max_overflow, 0)
+
+        self.http_connector_limit = min(self.http_connector_limit, 32)
+        self.http_connector_limit_per_host = min(self.http_connector_limit_per_host, 16)
+        self.upstream_stream_transport = "http"
+        self.http_responses_session_bridge_enabled = False
+        self.http_responses_session_bridge_codex_prewarm_enabled = False
+        self.usage_refresh_enabled = False
+        self.sticky_session_cleanup_enabled = False
+        self.model_registry_enabled = False
+        self.metrics_enabled = False
+        self.leader_election_enabled = False
+        self.otel_enabled = False
         return self
 
     @model_validator(mode="after")

@@ -116,6 +116,12 @@ python-version = "3.13"
 codex-lb = "app.cli:main"
 codex-lb-db = "app.db.migrate:main"
 
+[tool.vercel]
+entrypoint = "app.main:app"
+
+[tool.vercel.scripts]
+build = "python build.py"
+
 [build-system]
 requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"

@@ -52,13 +52,13 @@ class ApiKeyLimitResetScheduler:
 
     async def _run_loop(self) -> None:
         while not self._stop.is_set():
-            await self._reset_once()
+            await self.reset_once()
             try:
                 await asyncio.wait_for(self._stop.wait(), timeout=self.interval_seconds)
             except asyncio.TimeoutError:
                 continue
 
-    async def _reset_once(self) -> None:
+    async def reset_once(self) -> None:
         if not await _get_leader_election().try_acquire():
             return
         async with self._lock:

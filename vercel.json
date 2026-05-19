@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/**/*.py": {
+      "maxDuration": 300,
+      "excludeFiles": "{tests/**,openspec/**,docs/**,deploy/**,.github/**,frontend/**,app/static/**,public/**}"
+    }
+  },
   "headers": [
     {
       "source": "/assets/(.*)",
@@ -18,20 +24,67 @@
           "value": "public, max-age=31536000, immutable"
         }
       ]
+    },
+    {
+      "source": "/favicon.svg",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    }
+  ],
+  "crons": [
+    {
+      "path": "/internal/cron/usage-refresh",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/internal/cron/model-refresh",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/internal/cron/sticky-cleanup",
+      "schedule": "*/10 * * * *"
+    },
+    {
+      "path": "/internal/cron/api-key-limit-reset",
+      "schedule": "0 * * * *"
     }
   ],
   "rewrites": [
     {
-      "source": "/assets/(.*)",
-      "destination": "/app/static/assets/$1"
+      "source": "/api",
+      "destination": "/api"
     },
     {
-      "source": "/fonts/(.*)",
-      "destination": "/app/static/fonts/$1"
+      "source": "/api/(.*)",
+      "destination": "/api"
     },
     {
-      "source": "/favicon.svg",
-      "destination": "/app/static/favicon.svg"
+      "source": "/v1/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/backend-api/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/health",
+      "destination": "/api"
+    },
+    {
+      "source": "/health/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/internal/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }

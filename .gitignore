@@ -16,10 +16,12 @@ __pycache__/
 .envrc
 !.env.example
 .python-version
+!.python-version
 
 # Build artifacts
 build/
 dist/
+public/
 app/static/
 deploy/helm/*/charts/
 

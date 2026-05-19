@@ -10,6 +10,7 @@ pytestmark = pytest.mark.unit
 
 def test_settings_multi_replica_defaults():
     settings = Settings()
+    assert settings.serverless_mode is False
     assert settings.metrics_enabled is False
     assert settings.metrics_port == 9090
     assert settings.log_format == "text"
@@ -37,6 +38,35 @@ def test_settings_multi_replica_defaults():
     assert settings.shutdown_drain_timeout_seconds == 30
     assert settings.http_connector_limit == 100
     assert settings.http_connector_limit_per_host == 50
+
+
+def test_settings_serverless_defaults_from_vercel_env(monkeypatch):
+    monkeypatch.setenv("VERCEL", "1")
+    settings = Settings()
+    assert settings.serverless_mode is True
+    assert settings.database_pool_size == 4
+    assert settings.database_max_overflow == 2
+    assert settings.database_background_pool_size == 2
+    assert settings.database_background_max_overflow == 0
+    assert settings.http_connector_limit == 32
+    assert settings.http_connector_limit_per_host == 16
+    assert settings.upstream_stream_transport == "http"
+    assert settings.http_responses_session_bridge_enabled is False
+    assert settings.usage_refresh_enabled is False
+    assert settings.sticky_session_cleanup_enabled is False
+    assert settings.model_registry_enabled is False
+    assert settings.metrics_enabled is False
+
+
+def test_settings_serverless_mode_can_be_disabled_explicitly(monkeypatch):
+    monkeypatch.setenv("VERCEL", "1")
+    monkeypatch.setenv("CODEX_LB_SERVERLESS_MODE", "false")
+    monkeypatch.setenv("CODEX_LB_HTTP_RESPONSES_SESSION_BRIDGE_ENABLED", "true")
+    settings = Settings()
+    assert settings.serverless_mode is False
+    assert settings.database_pool_size == 15
+    assert settings.upstream_stream_transport == "auto"
+    assert settings.http_responses_session_bridge_enabled is True
 
 
 def test_settings_metrics_enabled_from_env(monkeypatch):
