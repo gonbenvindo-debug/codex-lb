@@ -6,6 +6,7 @@ import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, AsyncIterator, Awaitable, Callable, Protocol, TypeVar
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import anyio
 from anyio import to_thread
@@ -26,6 +27,23 @@ logger = logging.getLogger(__name__)
 
 _SQLITE_BUSY_TIMEOUT_MS = 5_000
 _SQLITE_BUSY_TIMEOUT_SECONDS = _SQLITE_BUSY_TIMEOUT_MS / 1000
+_UNSUPPORTED_ASYNCPG_QUERY_PARAMS = {"channel_binding"}
+
+
+def _strip_asyncpg_query_params(url: str) -> str:
+    parsed = urlsplit(url)
+    if not parsed.query:
+        return url
+
+    filtered_items = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.lower() not in _UNSUPPORTED_ASYNCPG_QUERY_PARAMS
+    ]
+    if len(filtered_items) == len(parse_qsl(parsed.query, keep_blank_values=True)):
+        return url
+
+    return urlunsplit(parsed._replace(query=urlencode(filtered_items, doseq=True)))
 
 
 def _normalize_async_database_url(url: str) -> str:
@@ -38,9 +56,11 @@ def _normalize_async_database_url(url: str) -> str:
     unchanged.
     """
     if url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    elif url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgresql+asyncpg://"):
+        return _strip_asyncpg_query_params(url)
     return url
 
 

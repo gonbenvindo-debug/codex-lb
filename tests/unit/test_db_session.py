@@ -86,6 +86,14 @@ def test_import_session_with_postgres_url_does_not_error() -> None:
     assert result.returncode == 0, result.stderr or result.stdout
 
 
+def test_normalize_async_database_url_strips_unsupported_asyncpg_query_params() -> None:
+    url = "postgresql://codex_lb:codex_lb@127.0.0.1:5432/codex_lb?sslmode=require&channel_binding=require"
+
+    normalized = session_module._normalize_async_database_url(url)
+
+    assert normalized == "postgresql+asyncpg://codex_lb:codex_lb@127.0.0.1:5432/codex_lb?sslmode=require"
+
+
 def test_background_pool_defaults_to_main_pool_settings(monkeypatch) -> None:
     monkeypatch.setattr(
         session_module,
