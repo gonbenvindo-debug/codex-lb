@@ -58,3 +58,5 @@ certs/
 .omx/
 PROMPT.md
 SUMMARY.md
+
+.vercel

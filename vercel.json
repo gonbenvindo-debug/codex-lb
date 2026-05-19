@@ -35,24 +35,6 @@
       ]
     }
   ],
-  "crons": [
-    {
-      "path": "/internal/cron/usage-refresh",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/internal/cron/model-refresh",
-      "schedule": "*/10 * * * *"
-    },
-    {
-      "path": "/internal/cron/sticky-cleanup",
-      "schedule": "*/10 * * * *"
-    },
-    {
-      "path": "/internal/cron/api-key-limit-reset",
-      "schedule": "0 * * * *"
-    }
-  ],
   "rewrites": [
     {
       "source": "/api",
