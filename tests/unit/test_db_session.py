@@ -91,7 +91,17 @@ def test_normalize_async_database_url_strips_unsupported_asyncpg_query_params() 
 
     normalized = session_module._normalize_async_database_url(url)
 
-    assert normalized == "postgresql+asyncpg://codex_lb:codex_lb@127.0.0.1:5432/codex_lb?sslmode=require"
+    assert normalized == "postgresql+asyncpg://codex_lb:codex_lb@127.0.0.1:5432/codex_lb"
+
+
+def test_postgres_connect_args_map_sslmode_for_asyncpg(monkeypatch) -> None:
+    monkeypatch.delenv("CODEX_LB_TEST_DATABASE_URL", raising=False)
+
+    connect_args = session_module._postgres_async_connect_args(
+        "postgresql+asyncpg://codex_lb:codex_lb@127.0.0.1:5432/codex_lb?sslmode=require"
+    )
+
+    assert connect_args == {"ssl": "require"}
 
 
 def test_background_pool_defaults_to_main_pool_settings(monkeypatch) -> None:

@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 _SQLITE_BUSY_TIMEOUT_MS = 5_000
 _SQLITE_BUSY_TIMEOUT_SECONDS = _SQLITE_BUSY_TIMEOUT_MS / 1000
 _UNSUPPORTED_ASYNCPG_QUERY_PARAMS = {"channel_binding"}
+_ASYNC_PG_URL_QUERY_CONNECT_ARGS = {"sslmode": "ssl"}
+
+
+def _parse_asyncpg_url_query(url: str) -> list[tuple[str, str]]:
+    return parse_qsl(urlsplit(url).query, keep_blank_values=True)
 
 
 def _strip_asyncpg_query_params(url: str) -> str:
@@ -37,10 +42,10 @@ def _strip_asyncpg_query_params(url: str) -> str:
 
     filtered_items = [
         (key, value)
-        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-        if key.lower() not in _UNSUPPORTED_ASYNCPG_QUERY_PARAMS
+        for key, value in _parse_asyncpg_url_query(url)
+        if key.lower() not in _UNSUPPORTED_ASYNCPG_QUERY_PARAMS and key.lower() not in _ASYNC_PG_URL_QUERY_CONNECT_ARGS
     ]
-    if len(filtered_items) == len(parse_qsl(parsed.query, keep_blank_values=True)):
+    if len(filtered_items) == len(_parse_asyncpg_url_query(url)):
         return url
 
     return urlunsplit(parsed._replace(query=urlencode(filtered_items, doseq=True)))
@@ -72,12 +77,20 @@ def _is_sqlite_memory_url(url: str) -> bool:
     return _is_sqlite_url(url) and ":memory:" in url
 
 
-def _postgres_async_connect_args(url: str) -> dict[str, int] | None:
+def _postgres_async_connect_args(url: str) -> dict[str, object] | None:
     if not url.startswith("postgresql+asyncpg://"):
         return None
-    if not os.environ.get("CODEX_LB_TEST_DATABASE_URL"):
-        return None
-    return {"prepared_statement_cache_size": 0}
+
+    connect_args: dict[str, object] = {}
+    for key, value in _parse_asyncpg_url_query(url):
+        mapped_key = _ASYNC_PG_URL_QUERY_CONNECT_ARGS.get(key.lower())
+        if mapped_key is not None:
+            connect_args[mapped_key] = value
+
+    if os.environ.get("CODEX_LB_TEST_DATABASE_URL"):
+        connect_args["prepared_statement_cache_size"] = 0
+
+    return connect_args or None
 
 
 def _postgres_async_engine_kwargs(url: str, *, background: bool) -> dict[str, object]:
