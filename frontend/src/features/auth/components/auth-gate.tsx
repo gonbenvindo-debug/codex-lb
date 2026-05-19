@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import type { PropsWithChildren } from "react";
 
 import { CodexLogo } from "@/components/brand/codex-logo";
+import { Button } from "@/components/ui/button";
 import { SpinnerBlock } from "@/components/ui/spinner";
 import { BootstrapSetupScreen } from "@/features/auth/components/bootstrap-setup-screen";
 import { LoginForm } from "@/features/auth/components/login-form";
@@ -17,6 +18,8 @@ export function AuthGate({ children }: PropsWithChildren) {
   const bootstrapRequired = useAuthStore((state) => state.bootstrapRequired);
   const totpRequiredOnLogin = useAuthStore((state) => state.totpRequiredOnLogin);
   const authMode = useAuthStore((state) => state.authMode);
+  const error = useAuthStore((state) => state.error);
+  const sessionCheckFailed = useAuthStore((state) => state.sessionCheckFailed);
 
   useEffect(() => {
     void refreshSessionStable();
@@ -27,6 +30,24 @@ export function AuthGate({ children }: PropsWithChildren) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <SpinnerBlock />
+      </div>
+    );
+  }
+
+  if (sessionCheckFailed && !authenticated) {
+    return (
+      <div className="relative flex min-h-screen items-center justify-center p-4">
+        <div className="w-full max-w-lg rounded-2xl border bg-card p-6 shadow-sm">
+          <h1 className="text-lg font-semibold tracking-tight">Unable to load authentication state</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            The dashboard could not confirm whether setup or sign-in is required. Retry after the serverless
+            function finishes starting, or check the deployment auth configuration.
+          </p>
+          {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
+          <Button className="mt-5" onClick={() => void refreshSessionStable()} disabled={loading}>
+            Retry
+          </Button>
+        </div>
       </div>
     );
   }
